@@ -41,47 +41,59 @@ finally:
 mod = Module()
 ctx = Context()
 
-setting_ocr_use_talon_backend = mod.setting(
+mod.setting(
     "ocr_use_talon_backend",
     type=bool,
     default=True,
     desc="If true, use Talon backend, otherwise use default fast backend from screen_ocr.",
 )
-setting_ocr_connect_tracker = mod.setting(
+mod.setting(
     "ocr_connect_tracker",
     type=bool,
     default=True,
     desc="If true, automatically connect the eye tracker at startup.",
 )
-setting_ocr_logging_dir = mod.setting(
+mod.setting(
     "ocr_logging_dir",
     type=str,
     default=None,
     desc="If specified, log OCR'ed images to this directory.",
 )
-setting_ocr_click_offset_right = mod.setting(
+mod.setting(
     "ocr_click_offset_right",
     type=int,
     default=0,
     desc="Adjust the X-coordinate when clicking around OCR text.",
 )
-setting_ocr_select_pause_seconds = mod.setting(
+mod.setting(
     "ocr_select_pause_seconds",
     type=float,
     default=0.5,
     desc="Adjust the pause between clicks when performing a selection.",
 )
-setting_ocr_debug_display_seconds = mod.setting(
+mod.setting(
     "ocr_debug_display_seconds",
     type=float,
     default=2,
     desc="Adjust how long debugging display is shown.",
 )
-setting_ocr_disambiguation_display_seconds = mod.setting(
+mod.setting(
     "ocr_disambiguation_display_seconds",
     type=float,
     default=5,
     desc="Adjust how long disambiguation display is shown. Use 0 to remove timeout.",
+)
+mod.setting(
+    "ocr_gaze_box_padding",
+    type=int,
+    default=100,
+    desc="How much padding is applied to gaze bounding box when searching for text.",
+)
+mod.setting(
+    "ocr_gaze_point_padding",
+    type=int,
+    default=200,
+    desc="How much padding is applied to gaze point when searching for text.",
 )
 
 mod.mode("gaze_ocr_disambiguation")
@@ -92,12 +104,16 @@ ctx.lists["self.ocr_actions"] = {
     "copy": "copy",
     "carve": "cut",
     "paste to": "paste",
-    # "clear": "delete",
+    "paste link to": "paste_link",
+    "clear": "delete",
     "change": "delete",
-    "wipe": "delete",
-    "chuck": "delete",
+    "delete": "delete_with_whitespace",
+    "chuck": "delete_with_whitespace",
     "cap": "capitalize",
+    "no cap": "uncapitalize",
+    "no caps": "uncapitalize",
     "lower": "lowercase",
+    "upper": "uppercase",
     # Note: the following are not defined by default in knausj.
     "bold": "bold",
     "italic": "italic",
@@ -150,6 +166,8 @@ default_punctuation_words = {
     # Currencies
     "dollar sign": "$",
     "pound sign": "£",
+    "hyphen": "-",
+    "underscore": "_",
 }
 
 
@@ -187,7 +205,7 @@ def reload_backend(name, flags):
     global tracker, ocr_reader, gaze_ocr_controller
     tracker = gaze_ocr.talon.TalonEyeTracker()
     # Note: tracker is connected automatically in the constructor.
-    if not setting_ocr_connect_tracker.get():
+    if not settings.get("user.ocr_connect_tracker"):
         tracker.disconnect()
     homophones = get_knausj_homophones()
     # TODO: Get this through an action to support customization.
@@ -215,15 +233,18 @@ def reload_backend(name, flags):
             ("ok", "okay", "0k"),
         ],
     )
-    if setting_ocr_use_talon_backend.get() and ocr:
+    setting_ocr_use_talon_backend = settings.get("user.ocr_use_talon_backend")
+    if setting_ocr_use_talon_backend and ocr:
         ocr_reader = screen_ocr.Reader.create_reader(
-            backend="talon", radius=200, homophones=homophones
+            backend="talon",
+            radius=settings.get("user.ocr_gaze_point_padding"),
+            homophones=homophones,
         )
     else:
-        if setting_ocr_use_talon_backend.get() and not ocr:
+        if setting_ocr_use_talon_backend and not ocr:
             logging.info("Talon OCR not available, will rely on external support.")
         ocr_reader = screen_ocr.Reader.create_fast_reader(
-            radius=200, homophones=homophones
+            radius=settings.get("user.ocr_gaze_point_padding"), homophones=homophones
         )
     gaze_ocr_controller = gaze_ocr.Controller(
         ocr_reader,
@@ -231,7 +252,8 @@ def reload_backend(name, flags):
         mouse=gaze_ocr.talon.Mouse(),
         keyboard=gaze_ocr.talon.Keyboard(),
         app_actions=gaze_ocr.talon.AppActions(),
-        save_data_directory=setting_ocr_logging_dir.get(),
+        save_data_directory=settings.get("user.ocr_logging_dir"),
+        gaze_box_padding=settings.get("user.ocr_gaze_box_padding"),
     )
 
 
@@ -253,7 +275,7 @@ def has_light_background(screenshot):
 
 disambiguation_canvas = None
 debug_canvas = None
-ambiguous_matches = None
+ambiguous_matches: Optional[Sequence[gaze_ocr.CursorLocation]] = None
 disambiguation_generator = None
 
 
@@ -261,12 +283,16 @@ def reset_disambiguation():
     global ambiguous_matches, disambiguation_generator, disambiguation_canvas, debug_canvas
     ambiguous_matches = None
     disambiguation_generator = None
+    hide_canvas = disambiguation_canvas or debug_canvas
     if disambiguation_canvas:
         disambiguation_canvas.close()
     disambiguation_canvas = None
     if debug_canvas:
         debug_canvas.close()
     debug_canvas = None
+    if hide_canvas:
+        # Ensure that the canvas doesn't interfere with subsequent screenshots.
+        actions.sleep("10ms")
 
 
 def show_disambiguation():
@@ -278,7 +304,7 @@ def show_disambiguation():
         debug_color = (
             "000000" if has_light_background(contents.screenshot) else "ffffff"
         )
-        nearest = contents.find_nearest_words_within_matches(ambiguous_matches)
+        nearest = gaze_ocr_controller.find_nearest_cursor_location(ambiguous_matches)
         used_locations = set()
         for i, match in enumerate(ambiguous_matches):
             if nearest == match:
@@ -287,18 +313,22 @@ def show_disambiguation():
                 )
             else:
                 c.paint.typeface = ""
-            c.paint.textsize = max(round(match[0].height * 2), 15)
+            c.paint.textsize = max(round(match.text_height * 2), 15)
             c.paint.style = c.paint.Style.FILL
             c.paint.color = debug_color
-            location = (match[0].left, match[0].top)
+            location = (match.visual_coordinates[0], match.visual_coordinates[1])
+            # TODO: Check for nearby used locations, not just identical.
             while location in used_locations:
                 # Shift right.
-                location = (location[0] + match[0].height, location[1])
+                location = (location[0] + match.text_height, location[1])
             used_locations.add(location)
             c.draw_text(str(i + 1), *location)
-        if setting_ocr_disambiguation_display_seconds.get():
+        setting_ocr_disambiguation_display_seconds = settings.get(
+            "user.ocr_disambiguation_display_seconds"
+        )
+        if setting_ocr_disambiguation_display_seconds:
             cron.after(
-                f"{setting_ocr_disambiguation_display_seconds.get()}s",
+                f"{setting_ocr_disambiguation_display_seconds}s",
                 disambiguation_canvas.close,
             )
 
@@ -326,11 +356,11 @@ def move_cursor_to_word_generator(text: TimestampedText):
     result = yield from gaze_ocr_controller.move_cursor_to_words_generator(
         text.text,
         disambiguate=True,
-        timestamp=text.start,
-        click_offset_right=setting_ocr_click_offset_right.get(),
+        time_range=(text.start, text.end),
+        click_offset_right=settings.get("user.ocr_click_offset_right"),
     )
     if not result:
-        actions.user.show_ocr_overlay("text", False, f"{text.text}")
+        actions.user.show_ocr_overlay_for_query("text", f"{text.text}")
         raise RuntimeError('Unable to find: "{}"'.format(text))
 
 
@@ -343,13 +373,66 @@ def move_text_cursor_to_word_generator(
         text.text,
         disambiguate=True,
         cursor_position=position,
-        timestamp=text.start,
-        click_offset_right=setting_ocr_click_offset_right.get(),
+        time_range=(text.start, text.end),
+        click_offset_right=settings.get("user.ocr_click_offset_right"),
         hold_shift=hold_shift,
     )
     if not result:
-        actions.user.show_ocr_overlay("text", False, f"{text.text}")
+        actions.user.show_ocr_overlay_for_query("text", f"{text.text}")
         raise RuntimeError('Unable to find: "{}"'.format(text))
+
+
+def move_text_cursor_to_longest_prefix_generator(
+    text: TimestampedText, position: str, hold_shift: bool = False
+):
+    (
+        locations,
+        prefix_length,
+    ) = yield from gaze_ocr_controller.move_text_cursor_to_longest_prefix_generator(
+        text.text,
+        disambiguate=True,
+        cursor_position=position,
+        time_range=(text.start, text.end),
+        click_offset_right=settings.get("user.ocr_click_offset_right"),
+        hold_shift=hold_shift,
+    )
+    if not locations:
+        actions.user.show_ocr_overlay_for_query("text", f"{text.text}")
+        raise RuntimeError('Unable to find: "{}"'.format(text))
+    return prefix_length
+
+
+def move_text_cursor_to_longest_suffix_generator(
+    text: TimestampedText, position: str, hold_shift: bool = False
+):
+    (
+        locations,
+        prefix_length,
+    ) = yield from gaze_ocr_controller.move_text_cursor_to_longest_suffix_generator(
+        text.text,
+        disambiguate=True,
+        cursor_position=position,
+        time_range=(text.start, text.end),
+        click_offset_right=settings.get("user.ocr_click_offset_right"),
+        hold_shift=hold_shift,
+    )
+    if not locations:
+        actions.user.show_ocr_overlay_for_query("text", f"{text.text}")
+        raise RuntimeError('Unable to find: "{}"'.format(text))
+    return prefix_length
+
+
+def move_text_cursor_to_difference(text: TimestampedText):
+    result = yield from gaze_ocr_controller.move_text_cursor_to_difference_generator(
+        text.text,
+        disambiguate=True,
+        time_range=(text.start, text.end),
+        click_offset_right=settings.get("user.ocr_click_offset_right"),
+    )
+    if not result:
+        actions.user.show_ocr_overlay_for_query("text", f"{text.text}")
+        raise RuntimeError('Unable to find: "{}"'.format(text))
+    return result
 
 
 def select_text_generator(
@@ -366,18 +449,31 @@ def select_text_generator(
         disambiguate=True,
         end_words=end_text,
         for_deletion=for_deletion,
-        start_timestamp=start.start,
-        end_timestamp=end.start if end else start.end,
-        click_offset_right=setting_ocr_click_offset_right.get(),
+        start_time_range=(start.start, start.end),
+        end_time_range=(end.start, end.end) if end else None,
+        click_offset_right=settings.get("user.ocr_click_offset_right"),
         after_start=after_start,
         before_end=before_end,
-        select_pause_seconds=setting_ocr_select_pause_seconds.get(),
+        select_pause_seconds=settings.get("user.ocr_select_pause_seconds"),
     )
     if not result:
-        actions.user.show_ocr_overlay(
-            "text", False, f"{start.text}...{end.text if end else None}"
+        actions.user.show_ocr_overlay_for_query(
+            "text", f"{start.text}...{end.text if end else None}"
         )
         raise RuntimeError('Unable to select "{}" to "{}"'.format(start, end))
+
+
+def select_matching_text_generator(text: TimestampedText):
+    result = yield from gaze_ocr_controller.select_matching_text_generator(
+        text.text,
+        disambiguate=True,
+        time_range=(text.start, text.end),
+        click_offset_right=settings.get("user.ocr_click_offset_right"),
+        select_pause_seconds=settings.get("user.ocr_select_pause_seconds"),
+    )
+    if not result:
+        actions.user.show_ocr_overlay_for_query("text", f"{text.text}")
+        raise RuntimeError('Unable to find: "{}"'.format(text))
 
 
 def perform_ocr_action_generator(
@@ -397,7 +493,7 @@ def perform_ocr_action_generator(
         for_deletion = (
             for_deletion
             if for_deletion is not None
-            else ocr_action in ("cut", "delete")
+            else ocr_action in ("cut", "delete_with_whitespace")
         )
         yield from select_text_generator(
             text_range.start,
@@ -421,14 +517,24 @@ def perform_ocr_action_generator(
         actions.edit.cut()
     elif ocr_action == "paste":
         actions.edit.paste()
-    elif ocr_action == "delete":
+    elif ocr_action == "paste_link":
+        actions.user.hyperlink()
+        actions.sleep("100ms")
+        actions.edit.paste()
+    elif ocr_action in ("delete", "delete_with_whitespace"):
         actions.key("backspace")
     elif ocr_action == "capitalize":
         text = actions.edit.selected_text()
         actions.insert(text[0].capitalize() + text[1:] if text else "")
+    elif ocr_action == "uncapitalize":
+        text = actions.edit.selected_text()
+        actions.insert(text[0].lower() + text[1:] if text else "")
     elif ocr_action == "lowercase":
         text = actions.edit.selected_text()
         actions.insert(text.lower())
+    elif ocr_action == "uppercase":
+        text = actions.edit.selected_text()
+        actions.insert(text.upper())
     elif ocr_action == "bold":
         actions.user.bold()
     elif ocr_action == "italic":
@@ -443,6 +549,14 @@ def perform_ocr_action_generator(
         actions.user.hyperlink()
     else:
         raise RuntimeError(f"Action not supported: {ocr_action}")
+
+
+def context_sensitive_insert(text: str):
+    if settings.get("user.context_sensitive_dictation"):
+        actions.user.dictation_insert(text)
+    else:
+        # Use the default insert because the dictation context is likely wrong.
+        actions.insert(text)
 
 
 @mod.action_class
@@ -490,10 +604,7 @@ class GazeOcrActions:
                 text_range,
                 for_deletion=settings.get("user.context_sensitive_dictation"),
             )
-            if settings.get("user.context_sensitive_dictation"):
-                actions.user.dictation_insert(replacement)
-            else:
-                actions.insert(replacement)
+            context_sensitive_insert(replacement)
 
         begin_generator(run())
 
@@ -507,25 +618,124 @@ class GazeOcrActions:
                 find_text,
                 position,
             )
-            if settings.get("user.context_sensitive_dictation"):
-                actions.user.dictation_insert(insertion_text)
-            else:
-                actions.insert(insertion_text)
+            context_sensitive_insert(insertion_text)
 
         begin_generator(run())
 
-    def show_ocr_overlay(type: str, refresh: bool, query: str = ""):
-        """Display overlay over primary screen."""
+    def append_text(text: TimestampedText):
+        """Finds onscreen text that matches the beginning of the provided text and
+        appends the rest to it."""
+
+        def run():
+            prefix_length = yield from move_text_cursor_to_longest_prefix_generator(
+                text, "after"
+            )
+            insertion_text = text.text[prefix_length:]
+            context_sensitive_insert(insertion_text)
+
+        begin_generator(run())
+
+    def prepend_text(text: TimestampedText):
+        """Finds onscreen text that matches the end of the provided text and
+        prepends the rest to it."""
+
+        def run():
+            suffix_length = yield from move_text_cursor_to_longest_suffix_generator(
+                text, "before"
+            )
+            insertion_text = text.text[:-suffix_length]
+            context_sensitive_insert(insertion_text)
+
+        begin_generator(run())
+
+    def insert_text_difference(text: TimestampedText):
+        """Finds onscreen text that matches the start and/or end of the provided text
+        and inserts the difference."""
+
+        def run():
+            start, end = yield from move_text_cursor_to_difference(text)
+            insertion_text = text.text[start:end]
+            context_sensitive_insert(insertion_text)
+
+        begin_generator(run())
+
+    def revise_text(text: TimestampedText):
+        """Finds onscreen text that matches the beginning and end of the provided text
+        and replaces it."""
+
+        def run():
+            yield from select_matching_text_generator(text)
+            insertion_text = text.text
+            context_sensitive_insert(insertion_text)
+
+        begin_generator(run())
+
+    def revise_text_starting_with(text: TimestampedText):
+        """Finds onscreen text that matches the beginning of the provided text
+        and replaces it until the caret."""
+
+        def run():
+            try:
+                yield from move_text_cursor_to_longest_prefix_generator(
+                    text, "before", hold_shift=True
+                )
+            except RuntimeError as e:
+                # Keep going so the user doesn't lose the dictated text.
+                print(e)
+            insertion_text = text.text
+            context_sensitive_insert(insertion_text)
+
+        begin_generator(run())
+
+    def revise_text_ending_with(text: TimestampedText):
+        """Finds onscreen text that matches the end of the provided text and
+        replaces it from the caret."""
+
+        def run():
+            try:
+                yield from move_text_cursor_to_longest_suffix_generator(
+                    text, "after", hold_shift=True
+                )
+            except RuntimeError as e:
+                # Keep going so the user doesn't lose the dictated text.
+                print(e)
+            insertion_text = text.text
+            context_sensitive_insert(insertion_text)
+
+        begin_generator(run())
+
+    def show_ocr_overlay(type: str, near: Optional[TimestampedText] = None):
+        """Displays overlay over primary screen.
+
+        Reads nearby gaze when the near parameter is spoken."""
+        reset_disambiguation()
+        if near:
+            gaze_ocr_controller.read_nearby((near.start, near.end))
+        else:
+            gaze_ocr_controller.read_nearby()
+        actions.user.show_ocr_overlay_for_query(type)
+
+    def show_ocr_overlay_for_query(type: str, query: str = ""):
+        """Display overlay over primary screen, displaying the query."""
         global debug_canvas
         if debug_canvas:
             debug_canvas.close()
-        if refresh:
-            gaze_ocr_controller.read_nearby()
         contents = gaze_ocr_controller.latest_screen_contents()
 
         def on_draw(c):
             debug_color = (
                 "000000" if has_light_background(contents.screenshot) else "ffffff"
+            )
+            # Show bounding box.
+            c.paint.style = c.paint.Style.STROKE
+            c.paint.color = debug_color
+            c.draw_rect(
+                rect.Rect(
+                    x=contents.bounding_box[0],
+                    y=contents.bounding_box[1],
+                    width=contents.bounding_box[2] - contents.bounding_box[0],
+                    height=contents.bounding_box[3] - contents.bounding_box[1],
+                )
             )
             if contents.screen_coordinates:
                 c.paint.style = c.paint.Style.STROKE
@@ -566,7 +776,7 @@ class GazeOcrActions:
                     else:
                         raise RuntimeError(f"Type not recognized: {type}")
             cron.after(
-                f"{setting_ocr_debug_display_seconds.get()}s", debug_canvas.close
+                f"{settings.get('user.ocr_debug_display_seconds')}s", debug_canvas.close
             )
 
         debug_canvas = Canvas.from_screen(screen.main())
@@ -655,7 +865,10 @@ class GazeOcrActions:
         """Switch the on-screen text to a different homophone."""
 
         def run():
-            yield from select_text_generator(text)
+            # Use click instead of selection because it is more reliable.
+            yield from move_cursor_to_word_generator(text)
+            actions.mouse_click(0)
+            actions.edit.select_word()
             actions.user.homophones_show_selection()
 
         begin_generator(run())

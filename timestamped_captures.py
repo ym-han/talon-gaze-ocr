@@ -51,11 +51,16 @@ def timestamped_phrase_default(m) -> TimestampedText:
     """Dictated phrase appearing onscreen (default capture)."""
     item = m[0]
     if isinstance(item, Phrase):
-        text = " ".join(
-            actions.dictate.replace_words(actions.dictate.parse_words(item))
-        )
-        start = item.words[0].start
-        end = item.words[-1].end
+        text = " ".join(actions.dictate.replace_words(item))
+        # TODO: Remove fallbacks once Phrase changes have been pushed to stable.
+        try:
+            start = item[0].start
+        except AttributeError:
+            start = item.words[0].start
+        try:
+            end = item[-1].end
+        except AttributeError:
+            end = item.words[-1].end
     else:
         text = str(item)
         start = item.start
@@ -94,6 +99,11 @@ def one_ended_prose_range(m) -> TextRange:
     # As a convenience, allow dropping "through" if position is provided.
     if has_through or m.prose_position.position:
         if not m.prose_position.position:
+            actions.app.notify(
+                'Try "[through] before <phrase>" or "[through] after <phrase>" instead'
+                ' of "through <phrase>". The cursor position is unknown to '
+                "talon-gaze-ocr."
+            )
             raise ValueError(
                 'Text range "through <phrase>" not supported because cursor position is unknown.'
             )
