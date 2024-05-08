@@ -20,6 +20,7 @@ mode: user.dictation_command
 (eye | i) middle (touch | click):
     user.move_cursor_to_gaze_point()
     mouse_click(2)
+
 # Example: "eye control click" to control-click where you're looking.
 (eye | i) <user.modifiers> (touch | click):
     user.move_cursor_to_gaze_point()
@@ -60,13 +61,16 @@ ocr show boxes: user.show_ocr_overlay("boxes")
 # Commands that operate on text nearby where you're looking.
 # Example: "hover seen apple" to hover the cursor over the word "apple".
 (hover (seen | scene) | cursor move) <user.timestamped_prose>$: user.move_cursor_to_word(timestamped_prose)
+
 # Example: "touch apple" to click the word "apple".
 (touch | click) <user.timestamped_prose>$:
     user.click_text(timestamped_prose)
+
 # The following command is mostly for testing/debugging the onscreen_text capture.
 screen [left] (touch | click) <user.onscreen_text>$:
     user.click_text(onscreen_text)
-[left] double (touch | click) <user.timestamped_prose>$:
+
+dub (touch | click) <user.timestamped_prose>$:
     user.double_click_text(timestamped_prose)
 right (touch | click) <user.timestamped_prose>$:
     user.right_click_text(timestamped_prose)
@@ -114,8 +118,8 @@ append with <user.timestamped_prose_only>$:
     user.append_text(timestamped_prose_only)
 
 # Example: "prepend with apple pear" to prepend "apple" before the word "pear".
-prepend with <user.timestamped_prose_only>$:
-    user.prepend_text(timestamped_prose_only)
+#prepend with <user.timestamped_prose_only>$:
+#    user.prepend_text(timestamped_prose_only)
 
 # Example: "insert with apple pear" to either append "pear" after the word "apple" or prepend
 # "apple" before the word "pear", depending on whether "apple" or "pear" is already onscreen.
