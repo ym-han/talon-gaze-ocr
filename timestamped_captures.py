@@ -2,7 +2,6 @@ from dataclasses import dataclass
 from typing import Optional
 
 from talon import Module, actions
-from talon.grammar import Phrase
 
 mod = Module()
 
@@ -28,44 +27,24 @@ class TextPosition:
     position: str
 
 
-@mod.capture(rule="<user.timestamped_phrase>+")
-def timestamped_prose(m) -> TimestampedText:
-    """Dictated text appearing onscreen."""
+@mod.capture(rule="<user.prose>")
+def timestamped_prose_only(m) -> TimestampedText:
+    """user.prose with timestamps."""
+    return TimestampedText(text=m.prose, start=m.prose_start, end=m.prose_end)
+
+
+@mod.capture(rule="{user.onscreen_ocr_text}")
+def onscreen_text(m) -> TimestampedText:
+    """Timestamped text appearing onscreen."""
     return TimestampedText(
-        text=" ".join([item.text for item in m]), start=m[0].start, end=m[-1].end
+        text=m[0], start=m.onscreen_ocr_text_start, end=m.onscreen_ocr_text_end
     )
 
 
-# Forward to enable easy extension via a Context.
-@mod.capture(rule="<user.timestamped_phrase_default>")
-def timestamped_phrase(m) -> TimestampedText:
-    """Dictated phrase appearing onscreen."""
+@mod.capture(rule="<self.timestamped_prose_only> | <self.onscreen_text>")
+def timestamped_prose(m) -> TimestampedText:
+    """Timestamped prose or onscreen text."""
     return m[0]
-
-
-# "edit" is frequently misrecognized as "at it", and is common in UIs.
-@mod.capture(
-    rule="<phrase> | {user.vocabulary} | {user.punctuation} | {user.prose_snippets} | edit"
-)
-def timestamped_phrase_default(m) -> TimestampedText:
-    """Dictated phrase appearing onscreen (default capture)."""
-    item = m[0]
-    if isinstance(item, Phrase):
-        text = " ".join(actions.dictate.replace_words(item))
-        # TODO: Remove fallbacks once Phrase changes have been pushed to stable.
-        try:
-            start = item[0].start
-        except AttributeError:
-            start = item.words[0].start
-        try:
-            end = item[-1].end
-        except AttributeError:
-            end = item.words[-1].end
-    else:
-        text = str(item)
-        start = item.start
-        end = item.end
-    return TimestampedText(text=text, start=start, end=end)
 
 
 @mod.capture(rule="[before | after] <self.timestamped_prose>")

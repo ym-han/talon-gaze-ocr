@@ -1,9 +1,10 @@
 import glob
 import logging
+import re
 import sys
 from math import floor
 from pathlib import Path
-from typing import Dict, Iterable, Optional, Sequence
+from typing import Dict, Iterable, Optional, Sequence, Union
 
 import numpy as np
 from talon import Context, Module, actions, app, cron, fs, screen, settings
@@ -99,6 +100,7 @@ mod.setting(
 mod.mode("gaze_ocr_disambiguation")
 mod.list("ocr_actions", desc="Actions to perform on selected text.")
 mod.list("ocr_modifiers", desc="Modifiers to perform on selected text.")
+mod.list("onscreen_ocr_text", desc="Selection list for onscreen text.")
 ctx.lists["self.ocr_actions"] = {
     "take": "select",
     "copy": "copy",
@@ -127,6 +129,19 @@ ctx.lists["self.ocr_modifiers"] = {
 }
 
 
+@ctx.dynamic_list("user.onscreen_ocr_text")
+def onscreen_ocr_text(phrase) -> Union[str, list[str], dict[str, str]]:
+    global gaze_ocr_controller, punctuation_table
+    reset_disambiguation()
+    gaze_ocr_controller.read_nearby((phrase[0].start, phrase[-1].end))
+    selection_list = gaze_ocr_controller.latest_screen_contents().as_string()
+    # Split camel-casing.
+    selection_list = re.sub(r"([a-z])([A-Z])", r"\1 \2", selection_list)
+    # Make punctuation speakable.
+    selection_list = selection_list.translate(punctuation_table)
+    return selection_list
+
+
 def add_homophones(
     homophones: Dict[str, Sequence[str]], to_add: Iterable[Iterable[str]]
 ):
@@ -143,7 +158,8 @@ def add_homophones(
 digits = "zero one two three four five six seven eight nine".split()
 default_digits_map = {n: i for i, n in enumerate(digits)}
 
-# Inline punctuation words in case people are using vanilla knausj, where these are not exposed.
+# Inline punctuation words in case people are using vanilla knausj, where these are not
+# exposed. Listed in order of preference.
 default_punctuation_words = {
     "back tick": "`",
     "grave": "`",
@@ -202,7 +218,7 @@ def get_knausj_homophones():
 
 def reload_backend(name, flags):
     # Initialize eye tracking and OCR.
-    global tracker, ocr_reader, gaze_ocr_controller
+    global tracker, ocr_reader, gaze_ocr_controller, punctuation_table
     tracker = gaze_ocr.talon.TalonEyeTracker()
     # Note: tracker is connected automatically in the constructor.
     if not settings.get("user.ocr_connect_tracker"):
@@ -221,9 +237,8 @@ def reload_backend(name, flags):
     add_homophones(
         homophones,
         [
-            (punctuation, spoken)
+            (punctuation, spoken.replace(" ", ""))
             for spoken, punctuation in punctuation_words.items()
-            if " " not in spoken
         ],
     )
     add_homophones(
@@ -232,6 +247,13 @@ def reload_backend(name, flags):
             # 0k is not actually a homophone but is frequently produced by OCR.
             ("ok", "okay", "0k"),
         ],
+    )
+    punctuation_table = str.maketrans(
+        {
+            punctuation: f" {spoken.replace(' ', '')} "
+            for spoken, punctuation in reversed(default_punctuation_words.items())
+            if len(punctuation) == 1
+        }
     )
     setting_ocr_use_talon_backend = settings.get("user.ocr_use_talon_backend")
     if setting_ocr_use_talon_backend and ocr:
