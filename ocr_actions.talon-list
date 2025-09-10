@@ -9,7 +9,7 @@ clear: delete
 change: delete
 delete: delete_with_whitespace
 chuck: delete_with_whitespace
-cap: capitalize
+all caps: capitalize
 no cap: uncapitalize
 no caps: uncapitalize
 lower: lowercase

@@ -7,21 +7,21 @@ mode: user.dictation_command
 # Commands that operate wherever you are looking.
 # Example: "eye hover" to hover the cursor over where you're looking.
 (eye | i) (hover | [cursor] move): user.move_cursor_to_gaze_point()
-(eye | i) [left] (touch | click):
+(eye | i) [left] lick:
     user.move_cursor_to_gaze_point()
     mouse_click(0)
-(eye | i) [left] double (touch | click):
+(eye | i) [left] dub lick:
     user.move_cursor_to_gaze_point()
     mouse_click(0)
     mouse_click(0)
-(eye | i) right (touch | click):
+(eye | i) rye lick:
     user.move_cursor_to_gaze_point()
     mouse_click(1)
-(eye | i) middle (touch | click):
+(eye | i) middle lick:
     user.move_cursor_to_gaze_point()
     mouse_click(2)
 # Example: "eye control click" to control-click where you're looking.
-(eye | i) <user.modifiers> (touch | click):
+(eye | i) <user.modifiers> lick:
     user.move_cursor_to_gaze_point()
     key("{modifiers}:down")
     mouse_click(0)
@@ -62,27 +62,27 @@ ocr show boxes last: user.show_ocr_overlay("boxes", types.none(), false)
 
 # Commands that operate on text nearby where you're looking.
 # Example: "hover seen apple" to hover the cursor over the word "apple".
-(hover (seen | scene) | cursor move) <user.timestamped_prose>$: user.move_cursor_to_word(timestamped_prose)
-# Example: "touch apple" to click the word "apple".
-[left] (touch | click) <user.timestamped_prose>$:
+(eye hover| cursor move) <user.timestamped_prose>$: user.move_cursor_to_word(timestamped_prose)
+# Example: "lick apple" to click the word "apple".
+eye lick <user.timestamped_prose>$:
     user.click_text(timestamped_prose)
 # Variant which chooses best match if multiple targets are found.
-lucky [left] (touch | click) <user.timestamped_prose>$:
+lucky eye lick <user.timestamped_prose>$:
     user.click_text_without_disambiguation(timestamped_prose)
 # The following command is mostly for testing/debugging the onscreen_text capture.
-screen [left] (touch | click) <user.onscreen_text>$:
+screen [left] lick <user.onscreen_text>$:
     user.click_text(onscreen_text)
-[left] double (touch | click) <user.timestamped_prose>$:
+eye dub lick <user.timestamped_prose>$:
     user.double_click_text(timestamped_prose)
-right (touch | click) <user.timestamped_prose>$:
+eye rye lick <user.timestamped_prose>$:
     user.right_click_text(timestamped_prose)
-middle (touch | click) <user.timestamped_prose>$:
-    user.middle_click_text(timestamped_prose)
-<user.modifiers> (touch | click) <user.timestamped_prose>$:
+#eye middle lick <user.timestamped_prose>$:
+#    user.middle_click_text(timestamped_prose)
+eye <user.modifiers> lick <user.timestamped_prose>$:
     user.modifier_click_text(modifiers, timestamped_prose)
 # Example: "go before apple" to move the text cursor before the word "apple".
-(go before | pre (seen | scene)) <user.timestamped_prose>$: user.move_text_cursor_to_word(timestamped_prose, "before")
-(go after | post (seen | scene)) <user.timestamped_prose>$: user.move_text_cursor_to_word(timestamped_prose, "after")
+pre (seen | scene) <user.timestamped_prose>$: user.move_text_cursor_to_word(timestamped_prose, "before")
+post (seen | scene) <user.timestamped_prose>$: user.move_text_cursor_to_word(timestamped_prose, "after")
 # Examples: 
 # "select apple" to select the word "apple".
 # "select apple through banana" to select the phrase "apple pear banana".
@@ -130,5 +130,5 @@ revise with <user.timestamped_prose_only>$:
 revise through <user.timestamped_prose_only>$:
     user.revise_text_ending_with(timestamped_prose_only)
 
-ocr tracker on: user.connect_ocr_eye_tracker()
-ocr tracker off: user.disconnect_ocr_eye_tracker()
+ocr on: user.connect_ocr_eye_tracker()
+ocr off: user.disconnect_ocr_eye_tracker()
