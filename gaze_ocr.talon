@@ -98,9 +98,9 @@ post (seen | scene) <user.timestamped_prose>$: user.move_text_cursor_to_word(tim
 # Example: "replace apple with banana" to replace the word "apple" with the word "banana".
 replace [{user.ocr_modifiers}] [seen | scene] <user.prose_range> with <user.prose>$:
     user.replace_text(ocr_modifiers or "", prose_range, prose)
-[go] before <user.timestamped_prose> say <user.prose>$:
+[go] pre <user.timestamped_prose> say <user.prose>$:
     user.insert_adjacent_to_text(timestamped_prose, "before", prose)
-[go] after <user.timestamped_prose> say <user.prose>$:
+[go] post <user.timestamped_prose> say <user.prose>$:
     user.insert_adjacent_to_text(timestamped_prose, "after", prose)
 phones [word] (seen | scene) <user.timestamped_prose>$:
     user.change_text_homophone(timestamped_prose)
